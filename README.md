@@ -79,7 +79,8 @@ python3 wechat_crawler_wo_ref.py
 4. 移动鼠标到**内容区域右下角**
 5. 按Enter
 
-![images](docs/Snipaste_2025-11-01_20-36-09.png)
+<img src=docs/Snipaste_2025-11-01_20-36-09.png width=50% />
+
 
 ✅ 完成！之后不再需要这步。
 
@@ -117,7 +118,7 @@ python3 wechat_crawler_wo_ref.py
 2. 手动将鼠标移到“第一个字符”
 3. 按Enter
 
-![IMAGES](docs/Snipaste_2025-11-01_21-13-11.png)
+<img src=docs/Snipaste_2025-11-01_21-13-11.png width=50% />
 
 ```
   ✓ 已记录首字符位置: (994, 139)
@@ -151,7 +152,8 @@ python3 wechat_crawler_wo_ref.py
 2. 手动将鼠标移到微信的返回按钮（←）
 3. 按Enter
 
-![image](docs/Snipaste_2025-11-01_21-14-03.png)
+<img src=docs/Snipaste_2025-11-01_21-14-03.png width=50% />
+
 ```
 ✓ 已记录返回按钮位置: (982, 62)
   之后将自动点击此位置返回
