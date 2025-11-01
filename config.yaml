@@ -1,0 +1,30 @@
+# 微信朋友圈抓取配置文件
+
+# 基本设置
+save_dir: "wechat_moments"  # 保存目录
+resume_from_checkpoint: true  # 是否从上次中断处继续
+
+# 操作延迟设置（单位：秒）
+delays:
+  click: 0.5           # 点击后的等待时间
+  page_load: 1.0       # 页面加载等待时间
+  scroll: 0.7          # 滚动后的等待时间
+  back: 1.0            # 返回后的等待时间
+  between_images: 0.6  # 保存图片之间的间隔
+  hotkey: 0.3          # 按下快捷键后等待时间
+
+# 滚动设置
+scroll:
+  amount: -5         # 每次滚动的像素数（负数向上滚动）
+  max_scrolls: 100      # 最大滚动次数（防止无限循环）
+
+# 图片保存设置
+image:
+  format: "jpg"        # 图片格式
+  quality: 95          # JPG质量（1-100）
+
+# 调试设置
+debug:
+  save_screenshots: true    # 是否保存调试截图
+  verbose: true             # 是否输出详细日志
+  show_detection: false     # 是否显示检测结果（需要GUI）
