@@ -3,6 +3,7 @@
 不保存timestamp
 """
 import sys
+import glob
 import pyautogui
 import cv2
 import re
@@ -101,9 +102,9 @@ class WeChatSmartCrawler:
             "delays": {
                 "click": 0.5,
                 "page_load": 1.0,
-                "scroll": 0.7,
+                "scroll": 0.5,
                 "back": 1.0,
-                "between_images": 0.6,
+                "between_images": 0.3,
                 "ocr": 1.0,
                 "hotkey": 0.3,
             },
@@ -210,12 +211,19 @@ class WeChatSmartCrawler:
 
     def select_and_get_text(self):
         """选中文字并获取其内容"""
+        # 自动点击文字开始
+        x, y = self.text_position
+        print(f"  点击首字符: ({x}, {y})")
+        pyautogui.mouseDown(x, y)
+
         pyperclip.copy('')
         # 全选当前文本框或选中区域的文字
         pyautogui.hotkey('command', 'a')  # macOS
         
-        time.sleep(self.config["delays"]["hotkey"])
         
+        time.sleep(self.config["delays"]["hotkey"])
+        pyautogui.mouseUp(x, y)
+
         # 复制到剪贴板
         pyautogui.hotkey('command', 'c')  # macOS
         
@@ -266,18 +274,12 @@ class WeChatSmartCrawler:
             self.record_text_postion()
 
 
-        # 自动点击文字开始
-        x, y = self.text_position
-        print(f"  点击首字符: ({x}, {y})")
-        pyautogui.click(x, y)
-
-        
         text = self.select_and_get_text()
         if not text:
             pyautogui.press('esc')
             time.sleep(2)
         # print(f'get text: {text}')
-        record_id = text[:10]
+        record_id = text[:20]
         if record_id != '' and record_id in self.record_keys:
             print('have record')
             return None, None
@@ -392,7 +394,7 @@ class WeChatSmartCrawler:
 
         # 检测图片位置
         image_positions= self.find_blocks_by_background_subtraction(region_cv)
-        image_positions.sort(key=lambda p: (p[1], p[0]))
+        image_positions.sort(key=lambda p: p[1]+p[0])
 
         print(f"  检测到 {len(image_positions)} 个图片区域")
 
@@ -433,6 +435,40 @@ class WeChatSmartCrawler:
                 pyautogui.press('right')
                 time.sleep(self.config["delays"]["between_images"])
         pyautogui.press('esc')
+
+        image_positions.sort(key=lambda p: (p[1], p[0]))
+        # check save results
+        for i, fn in enumerate(saved_images):
+            if not glob.glob(fn+'*'):
+                filename = f"{moment_index:04d}_{i+1:02d}"
+                filepath = self.images_dir / filename
+                x, y = image_positions[i]
+                x = x + self.region[0]
+                y = y + self.region[1]
+                flag = False
+                for j in range(20):
+                    # 点击图片
+                    pyautogui.click(x, y)
+                    time.sleep(1.0)
+
+                    # 输入文件名
+                    pyautogui.hotkey('command', 's')
+                    time.sleep(1.0)
+
+                    pyautogui.write(filename)
+                    time.sleep(self.config["delays"]["click"])
+                    
+                    # 按回车保存
+                    pyautogui.press('enter')
+                    time.sleep(self.config["delays"]["click"])
+
+                    pyautogui.press('esc')
+                    if glob.glob(fn+'*'):
+                        flag = True
+                        break
+                if not flag:
+                    # can't save the picture
+                    raise(f"can't save the picture {filename}")
 
 
         print(f"✓ 成功保存 {len(saved_images)} 张")
@@ -504,7 +540,7 @@ class WeChatSmartCrawler:
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
 
         print(max_val, match_thresh)
-        if max_val > match_thresh and max_loc[1] < 100:
+        if max_val > match_thresh and max_loc[1] < 50:
             # 上一页最后post移到当前前100行了，就可以停止，不让很容易滑过界
             return True
         else:
@@ -669,7 +705,18 @@ class WeChatSmartCrawler:
                     # 等待详情页
                     print("  等待详情页加载...")
                     time.sleep(self.config["delays"]["page_load"])
-                    self.state = State.SAVE_IMAGES
+                    
+                    region_screenshot = pyautogui.screenshot(region=self.region)
+                    curr_img = cv2.cvtColor(np.array(region_screenshot), cv2.COLOR_RGB2BGR)
+                    # import pdb;pdb.set_trace()
+                    # self.state = State.SAVE_IMAGES
+                    if self.bottom_lines_changed(self.curview, curr_img):
+                        # 已跳转
+                        self.state = State.SAVE_IMAGES
+                    elif len(self.posts):
+                        self.state = State.MATCH_TEXT
+                    else:
+                        self.state = State.SCROLL
                 elif self.state == State.SAVE_IMAGES:
                     # 3. 截取该区域图像
                     # region_screenshot = pyautogui.screenshot(region=self.region)
@@ -689,7 +736,7 @@ class WeChatSmartCrawler:
                         )
 
                         if text != "":
-                            self.record_keys.append(text[:10])
+                            self.record_keys.append(text[:20])
                         self.records.append(record)
                         self.current_moment_index += 1
                         print(f"\n✓ 完成第 {len(self.records)} 条")
