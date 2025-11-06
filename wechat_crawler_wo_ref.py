@@ -19,6 +19,11 @@ from typing import List, Tuple, Optional, Dict
 from dataclasses import dataclass, asdict
 import pyperclip
 
+
+import pytesseract
+import easyocr
+from paddleocr import PaddleOCR
+
 # 安全设置
 pyautogui.FAILSAFE = True
 
@@ -76,6 +81,11 @@ class WeChatSmartCrawler:
         self.curview = None
         self.record_keys = []
 
+        self.ocr = easyocr.Reader(['ch_sim'])
+        self.paddleocr = PaddleOCR(use_doc_orientation_classify=False,
+                             use_doc_unwarping=False,
+                             use_textline_orientation=False)
+                             
         # 检查点
         self.checkpoint_file = self.save_dir / "checkpoint.json"
         if self.config["resume_from_checkpoint"]:
@@ -235,15 +245,35 @@ class WeChatSmartCrawler:
 
     def get_post_time(self, region_cv):
         # 4. 在该区域进行OCR识别
-        result = self.ocr.predict(region_cv)
-        for text, box in zip(result[0]['rec_texts'], result[0]['rec_boxes']):
-            timestamp = self.chinese_date_to_timestamp(text) 
-            if timestamp:
+        bottom_image = region_cv[:,30:200,:]
+        text = pytesseract.image_to_string(bottom_image, lang='chi_sim+eng')
+        timestamp = self.chinese_date_to_timestamp(text) 
+
+        if timestamp is not None:
+            return timestamp
+        else:
+            print(text)
+            text = self.ocr.readtext(bottom_image)
+            if len(text):
+                text= text[0][1]
+                timestamp = self.chinese_date_to_timestamp(text) 
+            else:
+                timestamp = None
+            if timestamp is not None:
                 return timestamp
-        
-        print('get time failed')
-        print(result[0]['rec_texts'])
-        return None
+            else:
+                print(text)
+                # ocr failed:
+                result = self.paddleocr.predict(bottom_image)
+                text = "".join(result[0]['rec_texts'])
+                timestamp = self.chinese_date_to_timestamp(text) 
+                if timestamp:
+                    return timestamp
+                else:
+                    print('fail to ocr')
+                    fn = str(self.debug_dir / f'{self.current_moment_index}.png')
+                    cv2.imwrite(fn, region_cv)
+                    return fn
 
     def chinese_date_to_timestamp(self, date_str):
         """
@@ -282,11 +312,12 @@ class WeChatSmartCrawler:
         record_id = text[:20]
         if record_id != '' and record_id in self.record_keys:
             print('have record')
-            return None, None
+            return None, None, None
     
 
-        saved_images = self.save_images_auto(moment_index=moment_index)
-        return text, saved_images
+        saved_images, time_image = self.save_images_auto(moment_index=moment_index)
+        timestamp = self.get_post_time(time_image)
+        return text, saved_images, timestamp
 
     def find_blocks_by_background_subtraction(self, screenshot_cv,
                                             color_tolerance=4,
@@ -334,7 +365,10 @@ class WeChatSmartCrawler:
         # h_lines = cv2.morphologyEx(foreground_mask, cv2.MORPH_OPEN, h_kernel)
         # 5. 查找轮廓
         contours, _ = cv2.findContours(foreground_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
+       
+        min_score = 100000
+        bottom_contour = None
+
         blocks = []
         res = []
         for i, contour in enumerate(contours):
@@ -346,6 +380,12 @@ class WeChatSmartCrawler:
 
             if w > 400:
                 continue
+
+            score = abs(x - 482) + abs(y - 675) + abs(w-32) + abs(h-20)
+            # (482, 675, 32, 20)
+            if min_score > score:
+                bottom_contour = (x, y, w, h)
+                min_score = score
         
             # 过滤面积过小或过大的轮廓
             if area < min_area:
@@ -382,7 +422,8 @@ class WeChatSmartCrawler:
                 'aspect_ratio': aspect_ratio
             })
             res.append((center_x, center_y))
-        return res
+        cropped_image = screenshot_cv[bottom_contour[1]:bottom_contour[1]+bottom_contour[3], :]
+        return res, cropped_image
 
     def save_images_auto(self, moment_index: int) -> List[str]:
         """自动检测并保存图片"""
@@ -393,7 +434,7 @@ class WeChatSmartCrawler:
         region_cv = cv2.cvtColor(region_np, cv2.COLOR_RGB2BGR)
 
         # 检测图片位置
-        image_positions= self.find_blocks_by_background_subtraction(region_cv)
+        image_positions, cropped_image = self.find_blocks_by_background_subtraction(region_cv)
         image_positions.sort(key=lambda p: p[1]+p[0])
 
         print(f"  检测到 {len(image_positions)} 个图片区域")
@@ -472,7 +513,7 @@ class WeChatSmartCrawler:
 
 
         print(f"✓ 成功保存 {len(saved_images)} 张")
-        return saved_images
+        return saved_images, cropped_image
 
     def record_text_postion(self):
         """记录text start位置"""
@@ -722,7 +763,7 @@ class WeChatSmartCrawler:
                     # region_screenshot = pyautogui.screenshot(region=self.region)
                     # region_np = np.array(region_screenshot)
                     # record_id = self.image_hash_md5(region_np)
-                    text, images = self.save_posts(
+                    text, images, timestamp = self.save_posts(
                         self.current_moment_index)
 
                     if text is not None:    
@@ -730,7 +771,7 @@ class WeChatSmartCrawler:
                         record = MomentRecord(
                             # id=record_id,
                             moment_index=self.current_moment_index,
-                            timestamp=None,
+                            timestamp=timestamp,
                             text=text,
                             images=images,
                         )
