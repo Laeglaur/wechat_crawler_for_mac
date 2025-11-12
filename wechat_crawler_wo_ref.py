@@ -442,6 +442,8 @@ class WeChatSmartCrawler:
         sorted_by_y = sorted(positions, key=lambda p: p[1])
         
         rows = []
+        if len(sorted_by_y) <=2:
+            return sorted_by_y
         current_row = [sorted_by_y[0]]
         current_y = sorted_by_y[0][1]
         
