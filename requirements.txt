@@ -2,3 +2,6 @@ pyautogui
 opencv-python
 numpy
 pyyaml
+paddlepaddle
+paddleocr
+easyocr

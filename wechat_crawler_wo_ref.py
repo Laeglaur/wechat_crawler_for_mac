@@ -243,7 +243,10 @@ class WeChatSmartCrawler:
         text = pyperclip.paste()
         return text
 
-    def get_post_time(self, region_cv):
+    def get_post_time(self, region_cv, original_image):
+        """
+        四阶段，试了四种工具，没识别出来就存debug文件夹里
+        """
         # 4. 在该区域进行OCR识别
         bottom_image = region_cv[:,30:200,:]
         text = pytesseract.image_to_string(bottom_image, lang='chi_sim+eng')
@@ -270,10 +273,17 @@ class WeChatSmartCrawler:
                 if timestamp:
                     return timestamp
                 else:
-                    print('fail to ocr')
-                    fn = str(self.debug_dir / f'{self.current_moment_index}.png')
-                    cv2.imwrite(fn, region_cv)
-                    return fn
+                    # ocr failed:
+                    result = self.paddleocr.predict(original_image)
+                    text = "".join(result[0]['rec_texts'])
+                    timestamp = self.chinese_date_to_timestamp(text) 
+                    if timestamp:
+                        return timestamp
+                    else:
+                        print('fail to ocr')
+                        fn = str(self.debug_dir / f'{self.current_moment_index}.png')
+                        cv2.imwrite(fn, original_image)
+                        return fn
 
     def chinese_date_to_timestamp(self, date_str):
         """
@@ -282,7 +292,7 @@ class WeChatSmartCrawler:
         """
         # 使用正则表达式提取日期时间组件
         pattern = r'(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2})(:|：)(\d{1,2})'
-        match = re.match(pattern, date_str.strip().replace(' ',''))
+        match = re.search(pattern, date_str.strip().replace(' ',''))
         
         if not match:
             return None
@@ -302,21 +312,19 @@ class WeChatSmartCrawler:
         if not self.text_position:
             # 第一次，让用户点击并记录
             self.record_text_postion()
-
-
         text = self.select_and_get_text()
         if not text:
             pyautogui.press('esc')
             time.sleep(2)
         # print(f'get text: {text}')
-        record_id = text[:20]
+        record_id = text[:30]
         if record_id != '' and record_id in self.record_keys:
             print('have record')
             return None, None, None
     
 
-        saved_images, time_image = self.save_images_auto(moment_index=moment_index)
-        timestamp = self.get_post_time(time_image)
+        saved_images, time_crop, original_image = self.save_images_auto(moment_index=moment_index)
+        timestamp = self.get_post_time(time_crop, original_image)
         return text, saved_images, timestamp
 
     def find_blocks_by_background_subtraction(self, screenshot_cv,
@@ -425,6 +433,34 @@ class WeChatSmartCrawler:
         cropped_image = screenshot_cv[bottom_contour[1]:bottom_contour[1]+bottom_contour[3], :]
         return res, cropped_image
 
+    def sort_grid_positions(self, positions, y_tolerance=5):
+        """
+        排序2D坐标：整体从上往下，每行从左往右
+        y_tolerance: Y坐标容差，小于此值视为同一行
+        """
+        # 按Y坐标分组
+        sorted_by_y = sorted(positions, key=lambda p: p[1])
+        
+        rows = []
+        current_row = [sorted_by_y[0]]
+        current_y = sorted_by_y[0][1]
+        
+        for point in sorted_by_y[1:]:
+            if abs(point[1] - current_y) <= y_tolerance:
+                current_row.append(point)
+            else:
+                # 对当前行按X坐标排序
+                rows.append(sorted(current_row, key=lambda p: p[0]))
+                current_row = [point]
+                current_y = point[1]
+        
+        # 处理最后一行
+        if current_row:
+            rows.append(sorted(current_row, key=lambda p: p[0]))
+        
+        # 展平结果
+        return [point for row in rows for point in row]
+
     def save_images_auto(self, moment_index: int) -> List[str]:
         """自动检测并保存图片"""
         pyautogui.press('up')
@@ -436,6 +472,7 @@ class WeChatSmartCrawler:
         # 检测图片位置
         image_positions, cropped_image = self.find_blocks_by_background_subtraction(region_cv)
         image_positions.sort(key=lambda p: p[1]+p[0])
+        image_positions = self.sort_grid_positions(image_positions)
 
         print(f"  检测到 {len(image_positions)} 个图片区域")
 
@@ -477,7 +514,6 @@ class WeChatSmartCrawler:
                 time.sleep(self.config["delays"]["between_images"])
         pyautogui.press('esc')
 
-        image_positions.sort(key=lambda p: (p[1], p[0]))
         # check save results
         for i, fn in enumerate(saved_images):
             if not glob.glob(fn+'*'):
@@ -513,7 +549,7 @@ class WeChatSmartCrawler:
 
 
         print(f"✓ 成功保存 {len(saved_images)} 张")
-        return saved_images, cropped_image
+        return saved_images, cropped_image, region_cv
 
     def record_text_postion(self):
         """记录text start位置"""
@@ -572,7 +608,7 @@ class WeChatSmartCrawler:
         time.sleep(self.config["delays"]["back"])
 
 
-    def bottom_lines_changed(self, template, curr_img, match_thresh=0.8):
+    def bottom_lines_changed(self, template, curr_img, match_thresh=0.98):
         """
         判断上一屏底部 num_lines 行是否在当前屏幕中消失
         match_thresh: 模板匹配相似度阈值
@@ -581,7 +617,7 @@ class WeChatSmartCrawler:
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
 
         print(max_val, match_thresh)
-        if max_val > match_thresh and max_loc[1] < 50:
+        if max_val > match_thresh and max_loc[1] < 60:
             # 上一页最后post移到当前前100行了，就可以停止，不让很容易滑过界
             return True
         else:
@@ -777,7 +813,7 @@ class WeChatSmartCrawler:
                         )
 
                         if text != "":
-                            self.record_keys.append(text[:20])
+                            self.record_keys.append(text[:30])
                         self.records.append(record)
                         self.current_moment_index += 1
                         print(f"\n✓ 完成第 {len(self.records)} 条")
@@ -792,10 +828,6 @@ class WeChatSmartCrawler:
                         self.state = State.MATCH_TEXT
                     else:
                         self.state = State.SCROLL
-
-                # # 检查是否完成
-                # if self.current_moment_index >= 100:
-                #     self.state = State.DONE
 
             print("\n" + "="*60)
             print("抓取完成！")
